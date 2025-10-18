@@ -1,54 +1,29 @@
 import streamlit as st
 import pandas as pd
 
-st.title('Valora 🇸🇪')
+st.title("Valora 🇸🇪")
 
 # --- Ladda in data ---
-df = pd.read_csv('https://raw.githubusercontent.com/cb2cb/cb-machinelearning/refs/heads/master/fundamental_data.csv')
+df = pd.read_csv("https://raw.githubusercontent.com/cb2cb/cb-machinelearning/refs/heads/master/fundamental_data.csv")
 st.dataframe(df)
 
-# --- Rensa mellanslag och konvertera numeriska kolumner ---
-numeric_cols = ["MarketCap", "Debt/Equity", "FreeCashflow", "Beta", "Price"]
-for col in numeric_cols:
-    df[col] = (
-        df[col]
-        .astype(str)             # se till att kolumnen är sträng
-        .str.replace(r"\s+", "", regex=True)  # ta bort alla mellanslag
-        .str.replace(",", "")    # ta bort eventuella kommatecken
-    )
-    df[col] = pd.to_numeric(df[col], errors="coerce")
-
-st.dataframe(df.head())
-
-
 # --- Svensk WACC-funktion ---
-def calc_wacc(
-    market_cap,
-    total_debt=None,
-    cash=0,
-    beta=1.0,
-    interest_expense=None,
-    tax_rate=0.20  # svensk bolagsskatt
-):
+def calc_wacc(market_cap, total_debt=0, cash=0, beta=1.0, tax_rate=0.20):
     """
-    Beräknar WACC (Weighted Average Cost of Capital)
-    för svenska bolag.
+    Beräknar WACC (Weighted Average Cost of Capital) för svenska bolag.
     """
 
-    # --- Svenska standardvärden ---
-    risk_free = 0.025           # 10-årig statsobligation ≈ 2.5 %
-    market_premium = 0.055      # svensk riskpremie ≈ 5.5 %
-    re = risk_free + beta * market_premium  # kostnad för eget kapital (CAPM)
+    # Svenska standardvärden
+    risk_free = 0.025         # 10-årig statsobligation ≈ 2.5 %
+    market_premium = 0.055    # svensk riskpremie ≈ 5.5 %
+    re = risk_free + beta * market_premium
 
-    # --- Kostnad för skulder ---
-    if interest_expense is not None and total_debt and total_debt > 0:
-        rd = interest_expense / total_debt
-    else:
-        rd = risk_free + 0.015   # schablon för kreditrisk
+    # Kostnad för skulder (schablon)
+    rd = risk_free + 0.015
 
-    # --- Kapitalstruktur ---
+    # Kapitalstruktur
     E = market_cap
-    D = total_debt if total_debt else 0
+    D = total_debt
     V = E + D
 
     if V == 0:
@@ -62,10 +37,10 @@ ticker = st.selectbox("Välj bolag (ticker):", df["Ticker"].unique())
 row = df[df["Ticker"] == ticker].iloc[0]
 
 # --- Uppskatta skulder baserat på Debt/Equity ---
-if pd.notnull(row["Debt/Equity"]) and row["Debt/Equity"] > 0:
+if row["Debt/Equity"] > 0:
     total_debt = row["MarketCap"] * (row["Debt/Equity"] / 100)
 else:
-    total_debt = None
+    total_debt = 0
 
 # --- Beräkna WACC ---
 wacc = calc_wacc(
@@ -74,50 +49,46 @@ wacc = calc_wacc(
     beta=row["Beta"]
 )
 
-st.metric("Beräknad WACC", f"{wacc*100:.2f}%")
-
-# --- Tolkning ---
 if wacc:
+    st.metric("Beräknad WACC", f"{wacc*100:.2f}%")
+
     if wacc < 0.07:
         st.success("🟢 Låg kapitalkostnad – stabilt, moget bolag.")
     elif wacc < 0.10:
         st.info("🟡 Medelhög kapitalkostnad – balanserad risk.")
     else:
         st.warning("🔴 Hög kapitalkostnad – tillväxt eller hög risk.")
-
-
+else:
+    st.warning("WACC kunde inte beräknas (saknas data).")
 
 # --- Enkel DCF-beräkning baserad på FreeCashflow ---
-if pd.notnull(row["FreeCashflow"]) and row["FreeCashflow"] > 0:
+if row["FreeCashflow"] > 0 and wacc and wacc > 0:
     fcf_now = row["FreeCashflow"]
 
     # Antaganden
-    growth_rate = 0.03       # framtida årlig FCF-tillväxt
+    growth_rate = 0.03       # framtida FCF-tillväxt
     terminal_growth = 0.02   # evig tillväxt
     years = 5                # prognosperiod (år)
 
-    # Prognostisera framtida kassaflöden
+    # Prognostisera och diskontera kassaflöden
     fcfs = [fcf_now * ((1 + growth_rate) ** i) for i in range(1, years + 1)]
-
-    # Diskontera varje FCF
     discounted_fcfs = [fcf / ((1 + wacc) ** i) for i, fcf in enumerate(fcfs, start=1)]
 
-    # Terminalvärde (värdet efter år 5)
+    # Terminalvärde
     terminal_value = fcfs[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
     discounted_tv = terminal_value / ((1 + wacc) ** years)
 
-    # Summera
     enterprise_value = sum(discounted_fcfs) + discounted_tv
 
-    # Antag att MarketCap ≈ EquityValue
-    intrinsic_value = enterprise_value / row["MarketCap"] * row["Price"]
+    # Intrinsic Value per aktie (jämför med MarketCap och Price)
+    intrinsic_value_per_share = enterprise_value / row["MarketCap"] * row["Price"]
 
     st.subheader("📈 Enkel DCF-värdering")
-    st.write(f"Intrinsic Value (per aktie): **{intrinsic_value:.2f} SEK**")
+    st.write(f"Intrinsic Value (per aktie): **{intrinsic_value_per_share:.2f} SEK**")
 
-    if intrinsic_value > row["Price"]:
+    if intrinsic_value_per_share > row["Price"]:
         st.success("💰 Aktien verkar undervärderad enligt DCF.")
     else:
         st.warning("📉 Aktien verkar övervärderad enligt DCF.")
 else:
-    st.info("Ingen FreeCashflow-data tillgänglig för DCF-beräkning.")
+    st.info("Ingen giltig FreeCashflow-data för DCF-beräkning.")
