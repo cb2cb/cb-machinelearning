@@ -7,99 +7,63 @@ st.title("Valora 🇸🇪")
 df = pd.read_csv("https://raw.githubusercontent.com/cb2cb/cb-machinelearning/refs/heads/master/fundamental_data.csv")
 st.dataframe(df)
 
-# --- Svensk WACC-funktion ---
+# --- Svensk WACC ---
 def calc_wacc(market_cap, total_debt=0, cash=0, beta=1.0, tax_rate=0.20):
-    """
-    Beräknar WACC (Weighted Average Cost of Capital) för svenska bolag.
-    """
-    # Svenska standardvärden
-    risk_free = 0.025         # 10-årig statsobligation ≈ 2.5 %
-    market_premium = 0.055    # svensk riskpremie ≈ 5.5 %
+    risk_free = 0.025       # 10-årig statsobligation
+    market_premium = 0.055  # riskpremie
     re = risk_free + beta * market_premium
-
-    # Kostnad för skulder (schablon)
-    rd = risk_free + 0.015
-
-    # Kapitalstruktur
-    E = market_cap
-    D = total_debt
-    V = E + D
-
-    if V == 0:
-        return None
-
-    wacc = (E/V) * re + (D/V) * rd * (1 - tax_rate)
-    return round(wacc, 4)
-
+    rd = risk_free + 0.015  # schablon
+    E, D = market_cap, total_debt
+    V = E + D if E + D > 0 else 1
+    return round((E/V) * re + (D/V) * rd * (1 - tax_rate), 4)
 
 # --- Välj bolag ---
-ticker = st.selectbox("Välj bolag (ticker):", df["Ticker"].unique())
+ticker = st.selectbox("Välj bolag:", df["Ticker"].unique())
 row = df[df["Ticker"] == ticker].iloc[0]
 
-# --- Uppskatta skulder baserat på Debt/Equity ---
-if row["Debt/Equity"] > 0:
-    total_debt = row["MarketCap"] * (row["Debt/Equity"] / 100)
-else:
-    total_debt = 0
+# --- Uppskatta skulder ---
+total_debt = row["MarketCap"] * (row["Debt/Equity"] / 100) if row["Debt/Equity"] > 0 else 0
 
 # --- Beräkna WACC ---
-wacc = calc_wacc(
-    market_cap=row["MarketCap"],
-    total_debt=total_debt,
-    beta=row["Beta"]
-)
+wacc = calc_wacc(row["MarketCap"], total_debt, beta=row["Beta"])
 
 if wacc:
     st.metric("Beräknad WACC", f"{wacc*100:.2f}%")
-
-    if wacc < 0.07:
-        st.success("🟢 Låg kapitalkostnad – stabilt, moget bolag.")
-    elif wacc < 0.10:
-        st.info("🟡 Medelhög kapitalkostnad – balanserad risk.")
-    else:
-        st.warning("🔴 Hög kapitalkostnad – tillväxt eller hög risk.")
 else:
-    st.warning("WACC kunde inte beräknas (saknas data).")
+    st.warning("WACC kunde inte beräknas.")
 
-
-# --- Enkel DCF-beräkning på per-aktie-basis ---
-if row["FreeCashflow"] > 0 and wacc and wacc > 0:
+# --- DCF på per-aktie-nivå ---
+if row["FreeCashflow"] > 0 and wacc > 0:
     fcf_total = row["FreeCashflow"]
-    market_cap = row["MarketCap"]
     price = row["Price"]
+    shares = row["MarketCap"] / price if price > 0 else 0
+    fcf_per_share = fcf_total / shares if shares > 0 else 0
 
-    # Antal aktier (ungefär)
-    shares_outstanding = market_cap / price if price > 0 else None
+    # Antaganden
+    growth_rate = 0.03
+    terminal_growth = 0.02
+    years = 5
 
-    if shares_outstanding and shares_outstanding > 0:
-        # FCF per aktie
-        fcf_per_share = fcf_total / shares_outstanding
+    # Framtida FCF per aktie
+    fcfs = [fcf_per_share * ((1 + growth_rate) ** t) for t in range(1, years + 1)]
 
-        # Antaganden
-        growth_rate = 0.03       # framtida FCF-tillväxt
-        terminal_growth = 0.02   # evig tillväxt
-        years = 5                # prognosperiod (år)
+    # Diskontera
+    discounted_fcfs = [fcf / ((1 + wacc) ** t) for t, fcf in enumerate(fcfs, start=1)]
 
-        # Prognostisera framtida kassaflöden per aktie
-        fcfs = [fcf_per_share * ((1 + growth_rate) ** i) for i in range(1, years + 1)]
-        discounted_fcfs = [fcf / ((1 + wacc) ** i) for i, fcf in enumerate(fcfs, start=1)]
+    # Terminalvärde
+    fcf_n = fcfs[-1]
+    terminal_value = (fcf_n * (1 + terminal_growth)) / (wacc - terminal_growth)
+    discounted_terminal = terminal_value / ((1 + wacc) ** years)
 
-        # Terminalvärde per aktie
-        terminal_value = fcfs[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
-        discounted_tv = terminal_value / ((1 + wacc) ** years)
+    intrinsic_value = sum(discounted_fcfs) + discounted_terminal
 
-        # Totalt intrinsic value per aktie
-        intrinsic_value = sum(discounted_fcfs) + discounted_tv
+    st.subheader("📈 DCF-värdering (per aktie)")
+    st.write(f"Intrinsic Value: **{intrinsic_value:.2f} SEK**")
 
-        st.subheader("📈 Enkel DCF-värdering (per aktie)")
-        st.write(f"Intrinsic Value (per aktie): **{intrinsic_value:.2f} SEK**")
-
-        diff = (intrinsic_value - price) / price * 100
-        if intrinsic_value > price:
-            st.success(f"💰 Aktien verkar undervärderad med {diff:.1f}% enligt DCF.")
-        else:
-            st.warning(f"📉 Aktien verkar övervärderad med {abs(diff):.1f}% enligt DCF.")
+    diff = (intrinsic_value - price) / price * 100
+    if diff > 0:
+        st.success(f"💰 Undervärderad med {diff:.1f} %.")
     else:
-        st.info("Ogiltig aktiekurs eller marknadsvärde för att beräkna antal aktier.")
+        st.warning(f"📉 Övervärderad med {abs(diff):.1f} %.")
 else:
-    st.info("Ingen giltig FreeCashflow-data för DCF-beräkning.")
+    st.info("Ingen giltig FreeCashflow-data för DCF.")
