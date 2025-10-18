@@ -7,10 +7,19 @@ st.title('Valora 🇸🇪')
 df = pd.read_csv('https://raw.githubusercontent.com/cb2cb/cb-machinelearning/refs/heads/master/fundamental_data.csv')
 st.dataframe(df)
 
-# Konvertera numeriska kolumner till float
+# --- Rensa mellanslag och konvertera numeriska kolumner ---
 numeric_cols = ["MarketCap", "Debt/Equity", "FreeCashflow", "Beta", "Price"]
 for col in numeric_cols:
+    df[col] = (
+        df[col]
+        .astype(str)             # se till att kolumnen är sträng
+        .str.replace(r"\s+", "", regex=True)  # ta bort alla mellanslag
+        .str.replace(",", "")    # ta bort eventuella kommatecken
+    )
     df[col] = pd.to_numeric(df[col], errors="coerce")
+
+st.dataframe(df.head())
+
 
 # --- Svensk WACC-funktion ---
 def calc_wacc(
