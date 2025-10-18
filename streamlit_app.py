@@ -20,8 +20,7 @@ def calc_wacc(
     tax_rate=None
 ):
     """
-    Beräknar WACC (Weighted Average Cost of Capital)
-    för både nordiska och amerikanska bolag.
+    Beräknar WACC (Weighted Average Cost of Capital) för nordiska och amerikanska bolag.
     """
 
     rf_map = {
@@ -59,3 +58,19 @@ def calc_wacc(
 
     wacc = (E/V) * re + (D/V) * rd * (1 - T)
     return round(wacc, 4)
+
+# --- Funktion för att välja bolag och se WACC ---
+company = st.selectbox("Välj bolag:", df["Name"].unique())
+
+row = df[df["Name"] == company].iloc[0]
+
+wacc = calc_wacc(
+    market_cap=row["MarketCap"],
+    total_debt=row["TotalDebt"],
+    cash=row["Cash"],
+    beta=row["Beta"],
+    country=row["Country"]
+)
+
+st.metric("Beräknad WACC", f"{wacc*100:.2f}%")
+
