@@ -61,34 +61,41 @@ if wacc:
 else:
     st.warning("WACC kunde inte beräknas (saknas data).")
 
-# --- Enkel DCF-beräkning baserad på FreeCashflow ---
+# --- Enkel DCF-beräkning på per-aktie-basis ---
 if row["FreeCashflow"] > 0 and wacc and wacc > 0:
-    fcf_now = row["FreeCashflow"]
+    fcf_total = row["FreeCashflow"]
+    market_cap = row["MarketCap"]
+    price = row["Price"]
+
+    # Antal aktier (ungefär)
+    shares_outstanding = market_cap / price
+
+    # FCF per aktie
+    fcf_per_share = fcf_total / shares_outstanding
 
     # Antaganden
     growth_rate = 0.03       # framtida FCF-tillväxt
     terminal_growth = 0.02   # evig tillväxt
     years = 5                # prognosperiod (år)
 
-    # Prognostisera och diskontera kassaflöden
-    fcfs = [fcf_now * ((1 + growth_rate) ** i) for i in range(1, years + 1)]
+    # Prognostisera framtida kassaflöden per aktie
+    fcfs = [fcf_per_share * ((1 + growth_rate) ** i) for i in range(1, years + 1)]
     discounted_fcfs = [fcf / ((1 + wacc) ** i) for i, fcf in enumerate(fcfs, start=1)]
 
-    # Terminalvärde
+    # Terminalvärde per aktie
     terminal_value = fcfs[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
     discounted_tv = terminal_value / ((1 + wacc) ** years)
 
-    enterprise_value = sum(discounted_fcfs) + discounted_tv
+    # Totalt intrinsic value per aktie
+    intrinsic_value = sum(discounted_fcfs) + discounted_tv
 
-    # Intrinsic Value per aktie (jämför med MarketCap och Price)
-    intrinsic_value_per_share = enterprise_value / row["MarketCap"] * row["Price"]
+    st.subheader("📈 Enkel DCF-värdering (per aktie)")
+    st.write(f"Intrinsic Value (per aktie): **{intrinsic_value:.2f} SEK**")
 
-    st.subheader("📈 Enkel DCF-värdering")
-    st.write(f"Intrinsic Value (per aktie): **{intrinsic_value_per_share:.2f} SEK**")
-
-    if intrinsic_value_per_share > row["Price"]:
-        st.success("💰 Aktien verkar undervärderad enligt DCF.")
+    diff = (intrinsic_value - price) / price * 100
+    if intrinsic_value > price:
+        st.success(f"💰 Aktien verkar undervärderad med {diff:.1f}% enligt DCF.")
     else:
-        st.warning("📉 Aktien verkar övervärderad enligt DCF.")
+        st.warning(f"📉 Aktien verkar övervärderad med {abs(diff):.1f}% enligt DCF.")
 else:
     st.info("Ingen giltig FreeCashflow-data för DCF-beräkning.")
